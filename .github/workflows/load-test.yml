@@ -1,0 +1,200 @@
+name: Load Test with IBM MQ
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+
+    - name: Install JMeter
+      run: |
+        wget https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.6.3.tgz
+        tar -xzf apache-jmeter-5.6.3.tgz
+        sudo mv apache-jmeter-5.6.3 /opt/jmeter
+        sudo ln -s /opt/jmeter/bin/jmeter /usr/local/bin/jmeter
+
+    - name: Download IBM MQ JAR dependencies
+      run: |
+        mkdir -p /opt/jmeter/lib
+        # Download IBM MQ client JARs (these would be from your Maven repository)
+        # For now, we'll build the application first to get them from .m2
+
+    - name: Build application
+      run: mvn clean package -DskipTests
+
+    - name: Copy IBM MQ JARs to JMeter
+      run: |
+        # Copy IBM MQ JARs from Maven cache to JMeter lib
+        find ~/.m2/repository -name "*ibm.mq*.jar" -exec cp {} /opt/jmeter/lib/ \;
+        find ~/.m2/repository -name "*connector-api*.jar" -exec cp {} /opt/jmeter/lib/ \;
+
+    - name: Start Docker services
+      run: |
+        docker-compose -f .github/docker-compose.ci.yml up -d
+        # Wait for services to be ready
+        sleep 30
+
+    - name: Check IBM MQ status
+      run: |
+        docker logs ibmmq-ci
+        docker ps
+
+    - name: Wait for IBM MQ to be ready
+      run: |
+        # Wait up to 2 minutes for IBM MQ to be ready
+        timeout 120 bash -c 'until docker exec ibmmq-ci dspmq -m QM1 | grep "Running"; do sleep 5; done'
+
+    - name: Start Payara application
+      run: |
+        mvn payara-micro:start &
+        # Wait for application to start
+        sleep 45
+
+    - name: Check application health
+      run: |
+        curl -f http://localhost:8080/payara6-ibmmq/api/simple/health || exit 1
+        curl -f http://localhost:8080/payara6-ibmmq/api/batch/jobs || exit 1
+        curl -f http://localhost:8080/payara6-ibmmq/api/metrics/prometheus || exit 1
+
+    - name: Test IBM MQ connection
+      run: |
+        # Test if we can send a message via REST API
+        curl -X POST \
+          -H "Content-Type: text/plain" \
+          -d "GitHub Actions test message" \
+          http://localhost:8080/payara6-ibmmq/api/mq/send || echo "MQ connection failed"
+
+    - name: Run High Performance Load Tests
+      run: |
+        cd load-tests
+        echo "Starting high-performance load tests..."
+
+        # Run REST API Load Test (50 requests/s for 5 minutes)
+        echo "=== REST API Load Test ==="
+        jmeter -n \
+          -t simple-rest-load-test.jmx \
+          -l results/rest-load-$(date +%Y%m%d_%H%M%S).jtl \
+          -e \
+          -o results/rest-load-report-$(date +%Y%m%d_%H%M%S) \
+          -Japp_host=localhost \
+          -Japp_port=8080 \
+          || echo "REST API test completed with some errors"
+
+        # Wait before next test
+        sleep 30
+
+        # Run MQ High Performance Test (50 messages/s for 5 minutes)
+        echo "=== MQ High Performance Test ==="
+        jmeter -n \
+          -t high-performance-mq-test.jmx \
+          -l results/mq-load-$(date +%Y%m%d_%H%M%S).jtl \
+          -e \
+          -o results/mq-load-report-$(date +%Y%m%d_%H%M%S) \
+          -Japp_host=localhost \
+          -Japp_port=8080 \
+          -Jmq_threads=50 \
+          -Jtest_duration=300 \
+          || echo "MQ test completed with some errors"
+
+    - name: Generate summary report
+      run: |
+        cd load-tests
+        echo "# High Performance Load Test Results 🚀" > test-summary.md
+        echo "" >> test-summary.md
+        echo "## Test Configuration" >> test-summary.md
+        echo "- **Platform:** ${{ runner.os }} x86_64" >> test-summary.md
+        echo "- **Date:** $(date)" >> test-summary.md
+        echo "- **Target:** 50 Requests/s for 5 minutes" >> test-summary.md
+        echo "- **REST API Test:** 50 threads, 60s ramp-up, 300s duration" >> test-summary.md
+        echo "- **MQ Test:** 50 message producers, 300s duration" >> test-summary.md
+        echo "" >> test-summary.md
+
+        echo "## REST API Load Test Results" >> test-summary.md
+        if [ -f results/rest-load-report-*/statistics.json ]; then
+          echo "✅ REST API load test completed" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "### REST API Statistics" >> test-summary.md
+          echo "\`\`\`json" >> test-summary.md
+          cat results/rest-load-report-*/statistics.json >> test-summary.md
+          echo "\`\`\`" >> test-summary.md
+        else
+          echo "❌ REST API load test failed" >> test-summary.md
+        fi
+
+        echo "" >> test-summary.md
+        echo "## MQ High Performance Test Results" >> test-summary.md
+        if [ -f results/mq-load-report-*/statistics.json ]; then
+          echo "✅ MQ load test completed" >> test-summary.md
+          echo "" >> test-summary.md
+          echo "### MQ Statistics" >> test-summary.md
+          echo "\`\`\`json" >> test-summary.md
+          cat results/mq-load-report-*/statistics.json >> test-summary.md
+          echo "\`\`\`" >> test-summary.md
+        else
+          echo "❌ MQ load test failed" >> test-summary.md
+        fi
+
+        echo "" >> test-summary.md
+        echo "## Test Summary" >> test-summary.md
+        TOTAL_TESTS=$(find results -name "*.jtl" | wc -l)
+        echo "- **Total Test Runs:** $TOTAL_TESTS" >> test-summary.md
+        echo "- **Expected Duration:** ~11 minutes (5min + 30s + 5min)" >> test-summary.md
+        echo "- **Reports Generated:** $(find results -name "index.html" | wc -l)" >> test-summary.md
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: load-test-results
+        path: |
+          load-tests/results/
+          load-tests/test-summary.md
+
+    - name: Comment PR with results
+      uses: actions/github-script@v6
+      if: github.event_name == 'pull_request'
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'load-tests/test-summary.md';
+          if (fs.existsSync(path)) {
+            const summary = fs.readFileSync(path, 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+          }
+
+    - name: Show container logs on failure
+      if: failure()
+      run: |
+        echo "=== IBM MQ Logs ==="
+        docker logs ibmmq-ci
+        echo "=== PostgreSQL Logs ==="
+        docker logs postgres-ci
+        echo "=== Container Status ==="
+        docker ps -a

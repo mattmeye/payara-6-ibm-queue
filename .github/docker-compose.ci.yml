@@ -1,8 +1,9 @@
+version: '3.8'
+
 services:
   ibmmq:
     image: icr.io/ibm-messaging/mq:latest
-    platform: linux/amd64
-    container_name: ibmmq-dev
+    container_name: ibmmq-ci
     ports:
       - "1414:1414"
       - "9443:9443"
@@ -21,26 +22,22 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 2G
-        reservations:
+          cpus: '1.0'
           memory: 1G
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
+        reservations:
+          memory: 512M
     healthcheck:
       test: ["CMD", "dspmq", "-m", "QM1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
     networks:
       - mq-network
 
   postgres:
     image: postgres:16-alpine
-    container_name: postgres-db
+    container_name: postgres-ci
     ports:
       - "10201:5432"
     environment:
@@ -55,36 +52,9 @@ services:
       - mq-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mquser -d mqdb"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  payara:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: payara6-app
-    ports:
-      - "8080:8080"
-      - "4848:4848"
-      - "9009:9009"
-    depends_on:
-      - ibmmq
-      - postgres
-    environment:
-      - IBM_MQ_HOSTNAME=ibmmq
-      - IBM_MQ_PORT=1414
-      - IBM_MQ_QUEUE_MANAGER=QM1
-      - IBM_MQ_CHANNEL=DEV.APP.SVRCONN
-      - IBM_MQ_USERNAME=app
-      - IBM_MQ_PASSWORD=passw0rd
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=mqdb
-      - DB_USER=mquser
-      - DB_PASSWORD=mqpassword
-    networks:
-      - mq-network
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
 volumes:
   qm1data:

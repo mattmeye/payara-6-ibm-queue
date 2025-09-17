@@ -1,1 +1,40 @@
+# Maven
 target/
+dependency-reduced-pom.xml
+
+# IDE Files
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# JMeter Results
+load-tests/results/
+load-tests/*.jtl
+load-tests/jmeter.log
+
+# Docker Volumes
+docker-volumes/
+
+# Temporary Files
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Java
+*.class
+hs_err_pid*
+
+# Application Specific
+payara-micro-runtime/
