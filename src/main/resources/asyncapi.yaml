@@ -1,0 +1,728 @@
+asyncapi: 3.0.0
+info:
+  title: IBM MQ Integration AsyncAPI
+  version: 1.0.0
+  description: |
+    Asynchronous API specification for IBM MQ Integration Service
+
+    This specification defines the message-driven interactions between the application
+    and IBM MQ infrastructure, including:
+    - Message publishing and consuming patterns
+    - Batch processing workflows
+    - Dead letter and backout queue handling
+    - Request-response patterns via IBM MQ
+
+  contact:
+    name: Development Team
+    email: dev@example.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+defaultContentType: text/plain
+
+servers:
+  development:
+    host: localhost:1414
+    protocol: ibmmq
+    description: Development IBM MQ server
+    variables:
+      queueManager:
+        description: IBM MQ Queue Manager
+        default: QM1
+      channel:
+        description: IBM MQ Channel
+        default: DEV.APP.SVRCONN
+    security:
+      - mqBasicAuth: []
+    tags:
+      - name: dev
+        description: Development environment
+
+  production:
+    host: mq.example.com:1414
+    protocol: ibmmq
+    description: Production IBM MQ server
+    variables:
+      queueManager:
+        description: IBM MQ Queue Manager
+        default: PROD_QM1
+      channel:
+        description: IBM MQ Channel
+        default: PROD.APP.SVRCONN
+    security:
+      - mqBasicAuth: []
+      - mqSSL: []
+    tags:
+      - name: prod
+        description: Production environment
+
+channels:
+  request-queue:
+    address: DEV.QUEUE.1
+    title: Request Queue
+    summary: Primary queue for incoming messages
+    description: |
+      This queue receives incoming messages from external systems.
+      Messages are processed in FIFO order and can trigger batch jobs.
+    messages:
+      incomingMessage:
+        $ref: '#/components/messages/IncomingMessage'
+    parameters:
+      queueName:
+        description: Dynamic queue name for different environments
+        schema:
+          type: string
+          pattern: '^[A-Z][A-Z0-9._]*$'
+          examples:
+            - DEV.QUEUE.1
+            - TEST.QUEUE.1
+            - PROD.REQUEST.QUEUE
+
+  response-queue:
+    address: DEV.QUEUE.2
+    title: Response Queue
+    summary: Queue for outgoing response messages
+    description: |
+      This queue contains processed messages and responses.
+      Used for request-response patterns and notification delivery.
+    messages:
+      outgoingMessage:
+        $ref: '#/components/messages/OutgoingMessage'
+      responseMessage:
+        $ref: '#/components/messages/ResponseMessage'
+
+  batch-processing-queue:
+    address: DEV.BATCH.QUEUE
+    title: Batch Processing Queue
+    summary: Queue for batch job message processing
+    description: |
+      Dedicated queue for batch processing workflows.
+      Messages are consumed by Jakarta Batch jobs in chunks.
+    messages:
+      batchMessage:
+        $ref: '#/components/messages/BatchMessage'
+
+  dead-letter-queue:
+    address: DEV.QUEUE.DLQ
+    title: Dead Letter Queue
+    summary: Queue for failed messages
+    description: |
+      Repository for messages that failed processing after maximum retry attempts.
+      Used for manual intervention and error analysis.
+    messages:
+      failedMessage:
+        $ref: '#/components/messages/FailedMessage'
+
+  backout-queue:
+    address: DEV.QUEUE.1.BACKOUT
+    title: Backout Queue
+    summary: Queue for messages exceeding backout threshold
+    description: |
+      Messages that exceed the configured backout threshold are moved here.
+      Acts as a dead letter queue for persistent failures.
+    messages:
+      backoutMessage:
+        $ref: '#/components/messages/BackoutMessage'
+
+  health-check-queue:
+    address: DEV.HEALTH.QUEUE
+    title: Health Check Queue
+    summary: Queue for health monitoring messages
+    description: |
+      Special queue used for health checks and connectivity monitoring.
+      Supports liveness and readiness probes.
+    messages:
+      healthMessage:
+        $ref: '#/components/messages/HealthMessage'
+
+operations:
+  sendMessage:
+    action: send
+    channel:
+      $ref: '#/channels/request-queue'
+    title: Send Message to Request Queue
+    summary: Publish a message to the primary request queue
+    description: |
+      Sends a message to the request queue for processing.
+      The message will be picked up by batch jobs or real-time processors.
+    traits:
+      - $ref: '#/components/operationTraits/MQOperationTrait'
+    messages:
+      - $ref: '#/channels/request-queue/messages/incomingMessage'
+    reply:
+      channel:
+        $ref: '#/channels/response-queue'
+      messages:
+        - $ref: '#/channels/response-queue/messages/responseMessage'
+
+  receiveMessage:
+    action: receive
+    channel:
+      $ref: '#/channels/request-queue'
+    title: Receive Message from Request Queue
+    summary: Consume messages from the request queue
+    description: |
+      Consumes messages from the request queue for processing.
+      Used by batch readers and real-time message processors.
+    traits:
+      - $ref: '#/components/operationTraits/MQOperationTrait'
+    messages:
+      - $ref: '#/channels/request-queue/messages/incomingMessage'
+
+  sendResponse:
+    action: send
+    channel:
+      $ref: '#/channels/response-queue'
+    title: Send Response Message
+    summary: Publish processed message or response
+    description: |
+      Sends a response message after processing the original request.
+      Includes correlation ID for request-response pattern matching.
+    traits:
+      - $ref: '#/components/operationTraits/MQOperationTrait'
+    messages:
+      - $ref: '#/channels/response-queue/messages/outgoingMessage'
+      - $ref: '#/channels/response-queue/messages/responseMessage'
+
+  processBatchMessages:
+    action: receive
+    channel:
+      $ref: '#/channels/batch-processing-queue'
+    title: Process Batch Messages
+    summary: Consume messages in batch processing mode
+    description: |
+      Processes messages in chunks using Jakarta Batch framework.
+      Supports configurable chunk sizes and retry policies.
+    traits:
+      - $ref: '#/components/operationTraits/BatchOperationTrait'
+    messages:
+      - $ref: '#/channels/batch-processing-queue/messages/batchMessage'
+
+  handleFailedMessages:
+    action: send
+    channel:
+      $ref: '#/channels/dead-letter-queue'
+    title: Handle Failed Messages
+    summary: Move failed messages to dead letter queue
+    description: |
+      Moves messages that failed processing to the dead letter queue
+      for manual investigation and remediation.
+    traits:
+      - $ref: '#/components/operationTraits/ErrorHandlingTrait'
+    messages:
+      - $ref: '#/channels/dead-letter-queue/messages/failedMessage'
+
+  handleBackoutMessages:
+    action: send
+    channel:
+      $ref: '#/channels/backout-queue'
+    title: Handle Backout Messages
+    summary: Move messages exceeding backout threshold
+    description: |
+      Automatically moves messages to backout queue when they exceed
+      the configured backout threshold during processing.
+    traits:
+      - $ref: '#/components/operationTraits/BackoutOperationTrait'
+    messages:
+      - $ref: '#/channels/backout-queue/messages/backoutMessage'
+
+  healthCheck:
+    action: send
+    channel:
+      $ref: '#/channels/health-check-queue'
+    title: Health Check
+    summary: Send health check message
+    description: |
+      Sends a health check message to verify MQ connectivity
+      and system availability.
+    traits:
+      - $ref: '#/components/operationTraits/HealthCheckTrait'
+    messages:
+      - $ref: '#/channels/health-check-queue/messages/healthMessage'
+
+components:
+  messages:
+    IncomingMessage:
+      name: IncomingMessage
+      title: Incoming Message
+      summary: Message received from external systems
+      contentType: text/plain
+      traits:
+        - $ref: '#/components/messageTraits/MQMessageTrait'
+      payload:
+        $ref: '#/components/schemas/TextMessage'
+      examples:
+        - name: simpleText
+          summary: Simple text message
+          payload: "Hello World"
+        - name: jsonPayload
+          summary: JSON structured message
+          payload: '{"orderId": "12345", "customer": "John Doe", "amount": 99.99}'
+        - name: xmlPayload
+          summary: XML structured message
+          payload: '<order><id>12345</id><customer>John Doe</customer><amount>99.99</amount></order>'
+
+    OutgoingMessage:
+      name: OutgoingMessage
+      title: Outgoing Message
+      summary: Processed message sent to response queue
+      contentType: text/plain
+      traits:
+        - $ref: '#/components/messageTraits/MQMessageTrait'
+        - $ref: '#/components/messageTraits/ProcessedMessageTrait'
+      payload:
+        $ref: '#/components/schemas/ProcessedMessage'
+      examples:
+        - name: processedOrder
+          summary: Processed order confirmation
+          payload: '{"orderId": "12345", "status": "PROCESSED", "processedAt": "2023-12-17T12:34:56Z"}'
+
+    ResponseMessage:
+      name: ResponseMessage
+      title: Response Message
+      summary: Response message for request-response pattern
+      contentType: text/plain
+      traits:
+        - $ref: '#/components/messageTraits/MQMessageTrait'
+        - $ref: '#/components/messageTraits/CorrelatedMessageTrait'
+      payload:
+        $ref: '#/components/schemas/ResponsePayload'
+      examples:
+        - name: orderResponse
+          summary: Order processing response
+          payload: '{"correlationId": "CORR_001", "result": "SUCCESS", "orderId": "12345"}'
+
+    BatchMessage:
+      name: BatchMessage
+      title: Batch Processing Message
+      summary: Message processed in batch mode
+      contentType: text/plain
+      traits:
+        - $ref: '#/components/messageTraits/MQMessageTrait'
+        - $ref: '#/components/messageTraits/BatchMessageTrait'
+      payload:
+        $ref: '#/components/schemas/BatchPayload'
+      examples:
+        - name: batchItem
+          summary: Single batch item
+          payload: '{"batchId": "BATCH_001", "itemId": "ITEM_123", "data": "batch data"}'
+
+    FailedMessage:
+      name: FailedMessage
+      title: Failed Message
+      summary: Message that failed processing
+      contentType: text/plain
+      traits:
+        - $ref: '#/components/messageTraits/MQMessageTrait'
+        - $ref: '#/components/messageTraits/ErrorMessageTrait'
+      payload:
+        $ref: '#/components/schemas/FailedPayload'
+      examples:
+        - name: failedOrder
+          summary: Failed order processing
+          payload: '{"originalMessage": "...", "error": "Validation failed", "failedAt": "2023-12-17T12:34:56Z"}'
+
+    BackoutMessage:
+      name: BackoutMessage
+      title: Backout Message
+      summary: Message moved to backout queue
+      contentType: text/plain
+      traits:
+        - $ref: '#/components/messageTraits/MQMessageTrait'
+        - $ref: '#/components/messageTraits/BackoutMessageTrait'
+      payload:
+        $ref: '#/components/schemas/BackoutPayload'
+      examples:
+        - name: backoutOrder
+          summary: Order moved to backout queue
+          payload: '{"originalMessage": "...", "backoutReason": "Exceeded retry limit", "backoutAt": "2023-12-17T12:34:56Z"}'
+
+    HealthMessage:
+      name: HealthMessage
+      title: Health Check Message
+      summary: Health monitoring message
+      contentType: text/plain
+      traits:
+        - $ref: '#/components/messageTraits/MQMessageTrait'
+      payload:
+        $ref: '#/components/schemas/HealthPayload'
+      examples:
+        - name: healthPing
+          summary: Health check ping
+          payload: '{"type": "HEALTH_CHECK", "timestamp": "2023-12-17T12:34:56Z", "service": "IBMMQService"}'
+
+  schemas:
+    TextMessage:
+      type: string
+      description: Simple text message content
+      examples:
+        - "Hello World"
+        - "Processing request #12345"
+
+    ProcessedMessage:
+      type: object
+      description: Processed message with metadata
+      properties:
+        originalMessage:
+          type: string
+          description: Original message content
+        processedAt:
+          type: string
+          format: date-time
+          description: Processing timestamp
+        status:
+          type: string
+          enum: [PROCESSED, FAILED, RETRY]
+          description: Processing status
+        processingTime:
+          type: integer
+          description: Processing time in milliseconds
+      required:
+        - originalMessage
+        - processedAt
+        - status
+
+    ResponsePayload:
+      type: object
+      description: Response message payload
+      properties:
+        correlationId:
+          type: string
+          description: Correlation ID linking request and response
+        result:
+          type: string
+          enum: [SUCCESS, FAILURE, TIMEOUT]
+          description: Operation result
+        data:
+          type: object
+          description: Response data
+        timestamp:
+          type: string
+          format: date-time
+          description: Response timestamp
+      required:
+        - correlationId
+        - result
+        - timestamp
+
+    BatchPayload:
+      type: object
+      description: Batch processing message payload
+      properties:
+        batchId:
+          type: string
+          description: Batch job identifier
+        itemId:
+          type: string
+          description: Individual item identifier
+        chunkIndex:
+          type: integer
+          description: Chunk index within batch
+        data:
+          type: object
+          description: Item data for processing
+        metadata:
+          type: object
+          description: Additional processing metadata
+      required:
+        - batchId
+        - itemId
+        - data
+
+    FailedPayload:
+      type: object
+      description: Failed message payload with error information
+      properties:
+        originalMessage:
+          type: string
+          description: Original message that failed
+        error:
+          type: string
+          description: Error message or reason
+        errorCode:
+          type: string
+          description: Error classification code
+        retryCount:
+          type: integer
+          description: Number of retry attempts
+        failedAt:
+          type: string
+          format: date-time
+          description: Failure timestamp
+        stackTrace:
+          type: string
+          description: Error stack trace (optional)
+      required:
+        - originalMessage
+        - error
+        - retryCount
+        - failedAt
+
+    BackoutPayload:
+      type: object
+      description: Backout message payload
+      properties:
+        originalMessage:
+          type: string
+          description: Original message before backout
+        backoutReason:
+          type: string
+          description: Reason for backout
+        backoutCount:
+          type: integer
+          description: Number of backout attempts
+        backoutAt:
+          type: string
+          format: date-time
+          description: Backout timestamp
+        queueManager:
+          type: string
+          description: Source queue manager
+        originalQueue:
+          type: string
+          description: Original queue name
+      required:
+        - originalMessage
+        - backoutReason
+        - backoutCount
+        - backoutAt
+
+    HealthPayload:
+      type: object
+      description: Health check message payload
+      properties:
+        type:
+          type: string
+          enum: [HEALTH_CHECK, LIVENESS_PROBE, READINESS_PROBE]
+          description: Health check type
+        service:
+          type: string
+          description: Service identifier
+        timestamp:
+          type: string
+          format: date-time
+          description: Check timestamp
+        status:
+          type: string
+          enum: [HEALTHY, UNHEALTHY, DEGRADED]
+          description: Health status
+        details:
+          type: object
+          description: Additional health details
+      required:
+        - type
+        - service
+        - timestamp
+        - status
+
+  messageTraits:
+    MQMessageTrait:
+      headers:
+        type: object
+        properties:
+          JMSMessageID:
+            type: string
+            description: IBM MQ message identifier
+          JMSCorrelationID:
+            type: string
+            description: Correlation identifier for message linking
+          JMSTimestamp:
+            type: integer
+            format: int64
+            description: Message timestamp
+          JMSPriority:
+            type: integer
+            minimum: 0
+            maximum: 9
+            description: Message priority (0-9)
+          JMSExpiration:
+            type: integer
+            format: int64
+            description: Message expiration time
+          JMSDeliveryMode:
+            type: integer
+            enum: [1, 2]
+            description: Delivery mode (1=NON_PERSISTENT, 2=PERSISTENT)
+          JMSRedelivered:
+            type: boolean
+            description: Whether message has been redelivered
+          JMSType:
+            type: string
+            description: Message type identifier
+          JMSReplyTo:
+            type: string
+            description: Reply queue name
+        examples:
+          - JMSMessageID: "ID:414d51204d5130312020202020202020a4d2b5526703a540"
+            JMSCorrelationID: "CORR_001_20231217"
+            JMSTimestamp: 1702823456789
+            JMSPriority: 5
+            JMSDeliveryMode: 2
+            JMSRedelivered: false
+
+    ProcessedMessageTrait:
+      headers:
+        type: object
+        properties:
+          ProcessedBy:
+            type: string
+            description: Component that processed the message
+          ProcessingTime:
+            type: integer
+            description: Processing duration in milliseconds
+          ProcessedAt:
+            type: string
+            format: date-time
+            description: Processing completion timestamp
+
+    CorrelatedMessageTrait:
+      headers:
+        type: object
+        properties:
+          CorrelationID:
+            type: string
+            description: Correlation ID for request-response pattern
+          RequestID:
+            type: string
+            description: Original request identifier
+        required:
+          - CorrelationID
+
+    BatchMessageTrait:
+      headers:
+        type: object
+        properties:
+          BatchID:
+            type: string
+            description: Batch job identifier
+          ChunkIndex:
+            type: integer
+            description: Chunk index within batch
+          ItemIndex:
+            type: integer
+            description: Item index within chunk
+
+    ErrorMessageTrait:
+      headers:
+        type: object
+        properties:
+          ErrorCode:
+            type: string
+            description: Error classification code
+          ErrorTimestamp:
+            type: string
+            format: date-time
+            description: Error occurrence timestamp
+          RetryCount:
+            type: integer
+            description: Number of retry attempts
+
+    BackoutMessageTrait:
+      headers:
+        type: object
+        properties:
+          BackoutReason:
+            type: string
+            description: Reason for message backout
+          BackoutThreshold:
+            type: integer
+            description: Configured backout threshold
+          OriginalQueue:
+            type: string
+            description: Original source queue
+
+  operationTraits:
+    MQOperationTrait:
+      description: Common traits for IBM MQ operations
+      tags:
+        - name: mq
+      bindings:
+        ibmmq:
+          type: queue
+          durable: true
+          exclusive: false
+
+    BatchOperationTrait:
+      description: Traits for batch processing operations
+      tags:
+        - name: batch
+      bindings:
+        ibmmq:
+          type: queue
+          durable: true
+          exclusive: false
+          priority: 5
+
+    ErrorHandlingTrait:
+      description: Traits for error handling operations
+      tags:
+        - name: error
+      bindings:
+        ibmmq:
+          type: queue
+          durable: true
+          exclusive: false
+          priority: 9
+
+    BackoutOperationTrait:
+      description: Traits for backout queue operations
+      tags:
+        - name: backout
+      bindings:
+        ibmmq:
+          type: queue
+          durable: true
+          exclusive: false
+
+    HealthCheckTrait:
+      description: Traits for health check operations
+      tags:
+        - name: health
+      bindings:
+        ibmmq:
+          type: queue
+          durable: false
+          exclusive: false
+          priority: 1
+
+  securitySchemes:
+    mqBasicAuth:
+      type: userPassword
+      description: IBM MQ basic authentication
+    mqSSL:
+      type: X509
+      description: IBM MQ SSL/TLS certificate authentication
+
+  serverBindings:
+    ibmmq:
+      queueManager: QM1
+      channel: DEV.APP.SVRCONN
+      heartBeatInterval: 300
+      connectTimeout: 30
+
+  channelBindings:
+    ibmmq:
+      type: queue
+      durable: true
+      exclusive: false
+      autoDelete: false
+
+  messageBindings:
+    ibmmq:
+      type: jms
+      persistent: true
+      priority: 5
+      expiration: 3600000  # 1 hour
+
+tags:
+  - name: mq
+    description: IBM MQ message operations
+  - name: batch
+    description: Batch processing workflows
+  - name: error
+    description: Error handling and dead letter queues
+  - name: backout
+    description: Backout queue operations
+  - name: health
+    description: Health monitoring and checks

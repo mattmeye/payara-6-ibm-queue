@@ -1,0 +1,81 @@
+services:
+  ibmmq:
+    image: icr.io/ibm-messaging/mq:9.4.0.0-r3
+    platform: linux/amd64
+    container_name: ibmmq-dev
+    ports:
+      - "1414:1414"
+      - "9443:9443"
+      - "9157:9157"
+    volumes:
+      - qm1data:/mnt/mqm
+    environment:
+      LICENSE: accept
+      MQ_QMGR_NAME: QM1
+      MQ_APP_PASSWORD: passw0rd
+      MQ_ENABLE_METRICS: "true"
+      MQ_ADMIN_PASSWORD: admin
+    healthcheck:
+      test: ["CMD", "dspmq", "-m", "QM1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - mq-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-db
+    ports:
+      - "10201:5432"
+    environment:
+      POSTGRES_DB: mqdb
+      POSTGRES_USER: mquser
+      POSTGRES_PASSWORD: mqpassword
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - mq-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mquser -d mqdb"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  payara:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: payara6-app
+    ports:
+      - "8080:8080"
+      - "4848:4848"
+      - "9009:9009"
+    depends_on:
+      - ibmmq
+      - postgres
+    environment:
+      - IBM_MQ_HOSTNAME=ibmmq
+      - IBM_MQ_PORT=1414
+      - IBM_MQ_QUEUE_MANAGER=QM1
+      - IBM_MQ_CHANNEL=DEV.APP.SVRCONN
+      - IBM_MQ_USERNAME=app
+      - IBM_MQ_PASSWORD=passw0rd
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=mqdb
+      - DB_USER=mquser
+      - DB_PASSWORD=mqpassword
+    networks:
+      - mq-network
+
+volumes:
+  qm1data:
+  postgres_data:
+
+networks:
+  mq-network:
+    driver: bridge

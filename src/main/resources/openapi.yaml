@@ -1,0 +1,627 @@
+openapi: 3.0.3
+info:
+  title: IBM MQ Integration API
+  version: 1.0.0
+  description: |
+    RESTful API for IBM MQ message processing, monitoring, and management.
+
+    This API provides comprehensive functionality for:
+    - Sending and receiving messages to/from IBM MQ queues
+    - Managing message lifecycle and status
+    - Monitoring batch processing jobs
+    - Health checks and metrics collection
+
+  contact:
+    name: Development Team
+    email: dev@example.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: http://localhost:8080/api
+    description: Development server
+  - url: https://api.example.com/api
+    description: Production server
+
+tags:
+  - name: mq
+    description: IBM MQ message operations
+  - name: messages
+    description: Message repository and management
+  - name: batch
+    description: Batch job processing
+  - name: metrics
+    description: Monitoring and metrics
+  - name: health
+    description: Health checks
+
+paths:
+  /mq/send:
+    post:
+      tags:
+        - mq
+      summary: Send message to default queue
+      description: Sends a text message to the default IBM MQ queue
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              example: "Hello World"
+            examples:
+              simple:
+                summary: Simple text message
+                value: "Hello World"
+              json:
+                summary: JSON message
+                value: '{"orderId": "12345", "customer": "John Doe"}'
+              xml:
+                summary: XML message
+                value: '<order><id>12345</id><customer>John Doe</customer></order>'
+      responses:
+        '200':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              examples:
+                success:
+                  value:
+                    status: "success"
+                    message: "Message sent successfully"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /mq/send/{queue}:
+    post:
+      tags:
+        - mq
+      summary: Send message to specific queue
+      description: Sends a text message to a specified IBM MQ queue
+      parameters:
+        - name: queue
+          in: path
+          required: true
+          description: Target queue name
+          schema:
+            type: string
+            example: "DEV.QUEUE.1"
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              example: "Message for specific queue"
+      responses:
+        '200':
+          description: Message sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /mq/receive:
+    get:
+      tags:
+        - mq
+      summary: Receive message from default queue
+      description: Receives a message from the default IBM MQ queue
+      responses:
+        '200':
+          description: Message received or no message available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              examples:
+                with_message:
+                  value:
+                    status: "success"
+                    message: "Hello World"
+                no_message:
+                  value:
+                    status: "success"
+                    message: "No message available"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /mq/receive/{queue}:
+    get:
+      tags:
+        - mq
+      summary: Receive message from specific queue
+      description: Receives a message from a specified IBM MQ queue
+      parameters:
+        - name: queue
+          in: path
+          required: true
+          description: Source queue name
+          schema:
+            type: string
+            example: "DEV.QUEUE.2"
+      responses:
+        '200':
+          description: Message received or no message available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /mq/sendreceive:
+    post:
+      tags:
+        - mq
+      summary: Send message and wait for response
+      description: Implements request-response pattern by sending a message and waiting for a correlated response
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              example: "Request message"
+      responses:
+        '200':
+          description: Response received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResponseMessage'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /mq/health:
+    get:
+      tags:
+        - health
+      summary: MQ service health check
+      description: Check the health status of the IBM MQ integration service
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /messages:
+    get:
+      tags:
+        - messages
+      summary: Get all messages
+      description: Retrieve all messages from the repository
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageList'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/{id}:
+    get:
+      tags:
+        - messages
+      summary: Get message by ID
+      description: Retrieve a specific message by its database ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Message database ID
+          schema:
+            type: integer
+            format: int64
+            example: 12345
+      responses:
+        '200':
+          description: Message found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MQMessage'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags:
+        - messages
+      summary: Delete message by ID
+      description: Delete a specific message from the repository
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Message database ID
+          schema:
+            type: integer
+            format: int64
+            example: 12345
+      responses:
+        '200':
+          description: Message deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          description: Message not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/by-status/{status}:
+    get:
+      tags:
+        - messages
+      summary: Get messages by status
+      description: Retrieve messages filtered by their processing status
+      parameters:
+        - name: status
+          in: path
+          required: true
+          description: Message status
+          schema:
+            $ref: '#/components/schemas/MessageStatus'
+      responses:
+        '200':
+          description: Messages with specified status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageList'
+        '400':
+          description: Invalid status value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/by-queue/{queueName}:
+    get:
+      tags:
+        - messages
+      summary: Get messages by queue
+      description: Retrieve messages from a specific queue
+      parameters:
+        - name: queueName
+          in: path
+          required: true
+          description: Queue name
+          schema:
+            type: string
+            example: "DEV.QUEUE.1"
+      responses:
+        '200':
+          description: Messages from specified queue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageList'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/count/by-status/{status}:
+    get:
+      tags:
+        - messages
+      summary: Count messages by status
+      description: Get the count of messages for a specific status
+      parameters:
+        - name: status
+          in: path
+          required: true
+          description: Message status
+          schema:
+            $ref: '#/components/schemas/MessageStatus'
+      responses:
+        '200':
+          description: Message count
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CountResponse'
+        '400':
+          description: Invalid status value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/cleanup:
+    post:
+      tags:
+        - messages
+      summary: Cleanup old messages
+      description: Delete old processed messages to free up storage
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: Number of days to keep messages (default 30)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+            example: 30
+      responses:
+        '200':
+          description: Cleanup completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /messages/health:
+    get:
+      tags:
+        - health
+      summary: Message repository health check
+      description: Check the health status of the message repository
+      responses:
+        '200':
+          description: Repository is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+components:
+  schemas:
+    MQMessage:
+      type: object
+      description: IBM MQ message entity
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Database primary key
+          example: 12345
+        messageId:
+          type: string
+          description: Unique message identifier
+          example: "MSG_001_20231217_123456"
+        correlationId:
+          type: string
+          description: Correlation ID for request-response patterns
+          example: "CORR_001_20231217"
+        queueName:
+          type: string
+          description: Source or target queue name
+          example: "DEV.QUEUE.1"
+        messageContent:
+          type: string
+          description: Message payload content
+          example: "Hello World"
+        messageType:
+          type: string
+          description: Message type classification
+          example: "text"
+        priority:
+          type: integer
+          description: Message priority (0-9)
+          minimum: 0
+          maximum: 9
+          example: 5
+        expiry:
+          type: integer
+          format: int64
+          description: Message expiry timestamp
+          example: 1702823456789
+        receivedAt:
+          type: string
+          format: date-time
+          description: When the message was received
+          example: "2023-12-17T12:34:56Z"
+        processedAt:
+          type: string
+          format: date-time
+          description: When the message was processed
+          example: "2023-12-17T12:35:01Z"
+        status:
+          $ref: '#/components/schemas/MessageStatus'
+        errorMessage:
+          type: string
+          description: Error message if processing failed
+          example: "Connection timeout"
+        retryCount:
+          type: integer
+          description: Number of retry attempts
+          minimum: 0
+          example: 2
+        backoutCount:
+          type: integer
+          description: Number of backout attempts
+          minimum: 0
+          example: 0
+        backoutAt:
+          type: string
+          format: date-time
+          description: When the message was backed out
+          example: "2023-12-17T12:36:00Z"
+        version:
+          type: integer
+          format: int64
+          description: Entity version for optimistic locking
+          example: 1
+
+    MessageStatus:
+      type: string
+      description: Message processing status
+      enum:
+        - RECEIVED
+        - PROCESSING
+        - PROCESSED
+        - FAILED
+        - RETRY
+        - BACKOUT
+      example: PROCESSED
+
+    SuccessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success]
+          example: "success"
+        message:
+          type: string
+          example: "Operation completed successfully"
+
+    ErrorResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [error]
+          example: "error"
+        message:
+          type: string
+          example: "An error occurred"
+
+    MessageResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success]
+          example: "success"
+        message:
+          type: string
+          example: "Hello World"
+
+    ResponseMessage:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success]
+          example: "success"
+        response:
+          type: string
+          example: "Response message"
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy]
+          example: "healthy"
+        service:
+          type: string
+          example: "IBM MQ Integration"
+
+    MessageList:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MQMessage'
+
+    CountResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "PROCESSED"
+        count:
+          type: integer
+          format: int64
+          example: 150
+
+    CleanupResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success]
+          example: "success"
+        deletedCount:
+          type: integer
+          description: Number of messages deleted
+          example: 42
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token authentication
+
+security:
+  - bearerAuth: []

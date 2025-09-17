@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<job id="mq-to-postgres-job" xmlns="https://jakarta.ee/xml/ns/jakartaee" version="2.1">
+    <properties>
+        <property name="job.description" value="Process messages from IBM MQ and store them in PostgreSQL"/>
+        <property name="chunk.size" value="10"/>
+        <property name="skip.limit" value="5"/>
+        <property name="retry.limit" value="3"/>
+    </properties>
+
+    <step id="processMessages">
+        <chunk item-count="#{jobParameters['chunk.size']?:10}">
+            <reader ref="MQMessageReader"/>
+            <processor ref="MQMessageProcessor"/>
+            <writer ref="MQMessageWriter"/>
+
+            <!-- Skip policy for handling individual item failures -->
+            <skippable-exception-classes>
+                <include class="jakarta.jms.JMSException"/>
+                <include class="java.lang.RuntimeException"/>
+            </skippable-exception-classes>
+
+            <!-- Retry policy for transient failures -->
+            <retryable-exception-classes>
+                <include class="jakarta.persistence.PersistenceException"/>
+                <include class="java.sql.SQLException"/>
+            </retryable-exception-classes>
+
+            <!-- Checkpoint policy -->
+            <checkpoint-policy>item</checkpoint-policy>
+        </chunk>
+
+        <!-- Step listeners for monitoring -->
+        <listeners>
+            <listener ref="MQBatchJobListener"/>
+        </listeners>
+
+        <!-- Handle step failures -->
+        <fail on="FAILED" exit-status="FAILED"/>
+        <stop on="STOPPED" exit-status="STOPPED"/>
+        <end on="COMPLETED" exit-status="COMPLETED"/>
+    </step>
+</job>
