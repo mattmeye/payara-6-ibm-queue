@@ -22,7 +22,7 @@ jobs:
         distribution: 'temurin'
 
     - name: Cache Maven dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.m2
         key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
@@ -68,9 +68,23 @@ jobs:
 
     - name: Start Payara application
       run: |
-        mvn payara-micro:start &
-        # Wait for application to start
-        sleep 45
+        echo "Starting Payara Micro in background..."
+        nohup mvn payara-micro:start > payara-output.log 2>&1 &
+        PAYARA_PID=$!
+        echo "Payara PID: $PAYARA_PID"
+        echo $PAYARA_PID > payara.pid
+
+        # Wait for application to be ready (max 2 minutes)
+        echo "Waiting for Payara to start..."
+        timeout 120 bash -c '
+          until curl -f http://localhost:8080/payara6-ibmmq/api/simple/health >/dev/null 2>&1; do
+            echo "Waiting for application..."
+            sleep 5
+          done
+        '
+
+        echo "Application health check passed!"
+        curl -s http://localhost:8080/payara6-ibmmq/api/simple/health
 
     - name: Check application health
       run: |
@@ -164,7 +178,7 @@ jobs:
         echo "- **Reports Generated:** $(find results -name "index.html" | wc -l)" >> test-summary.md
 
     - name: Upload test results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: load-test-results
@@ -173,7 +187,7 @@ jobs:
           load-tests/test-summary.md
 
     - name: Comment PR with results
-      uses: actions/github-script@v6
+      uses: actions/github-script@v7
       if: github.event_name == 'pull_request'
       with:
         script: |
@@ -189,6 +203,28 @@ jobs:
             });
           }
 
+    - name: Stop Payara application
+      if: always()
+      run: |
+        echo "Stopping Payara application..."
+        if [ -f payara.pid ]; then
+          PAYARA_PID=$(cat payara.pid)
+          echo "Killing Payara process $PAYARA_PID"
+          kill $PAYARA_PID || echo "Process already stopped"
+          rm -f payara.pid
+        fi
+        # Also kill any remaining Java processes
+        pkill -f payara-micro || echo "No payara processes found"
+
+    - name: Upload application logs
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: application-logs
+        path: |
+          payara-output.log
+          load-tests/jmeter.log
+
     - name: Show container logs on failure
       if: failure()
       run: |
@@ -196,5 +232,11 @@ jobs:
         docker logs ibmmq-ci
         echo "=== PostgreSQL Logs ==="
         docker logs postgres-ci
+        echo "=== Payara Application Logs ==="
+        if [ -f payara-output.log ]; then
+          tail -n 100 payara-output.log
+        fi
         echo "=== Container Status ==="
         docker ps -a
+        echo "=== Process Status ==="
+        ps aux | grep -E "(payara|java)" || echo "No Java processes found"
